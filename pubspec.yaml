@@ -1,0 +1,39 @@
+﻿name: kcn_v3
+
+description: Krishi Credit Network - Farmer Credit & Network Commerce Platform
+publish_to: 'none'
+version: 1.0.2+7
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^4.1.1
+  firebase_auth: ^6.0.2
+  cloud_firestore: ^6.0.1
+  firebase_storage: ^13.0.1
+  intl: ^0.20.2
+  provider: ^6.1.5
+  shared_preferences: ^2.5.3
+  url_launcher: ^6.3.1
+  package_info_plus: ^8.3.1
+  crypto: ^3.0.7
+  google_mobile_ads: ^7.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo/
+    - assets/images/
+    - assets/icons/
+    - assets/lottie/
+    - assets/pdf/
+    - assets/sounds/
+

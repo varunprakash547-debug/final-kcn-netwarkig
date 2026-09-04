@@ -1,0 +1,220 @@
+﻿const { onDocumentCreated, onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { setGlobalOptions } = require('firebase-functions/v2');
+const admin = require('firebase-admin');
+
+admin.initializeApp();
+setGlobalOptions({ region: 'asia-south1', maxInstances: 20 });
+const db = admin.firestore();
+const n = (v) => (typeof v === 'number' ? v : Number(v || 0));
+
+exports.syncCreditProfile = onDocumentWritten('credits_v3/{creditId}', async (event) => {
+  const after = event.data?.after;
+  if (!after?.exists) return null;
+  const d = after.data();
+  const farmerId = d.farmerId;
+  if (!farmerId) return null;
+
+  const snap = await db.collection('credits_v3').where('farmerId', '==', farmerId).get();
+  let totalCredit = 0;
+  let totalPaid = 0;
+  let outstanding = 0;
+  const activeCenters = new Set();
+  const overdueCenters = new Set();
+  const now = Date.now();
+
+  snap.forEach((doc) => {
+    const x = doc.data();
+    totalCredit += n(x.amount);
+    totalPaid += n(x.paidAmount);
+    outstanding += n(x.balanceAmount);
+    if (n(x.balanceAmount) > 0) activeCenters.add(x.krishiKendraId || '');
+    const due = x.dueDate?.toDate?.();
+    if (n(x.balanceAmount) > 0 && due && due.getTime() < now) overdueCenters.add(x.krishiKendraId || '');
+  });
+
+  const ratio = totalCredit <= 0 ? 1 : Math.max(0, Math.min(1, totalPaid / totalCredit));
+  const score = Math.max(300, Math.min(900, Math.round(500 + ratio * 400 - overdueCenters.size * 40)));
+  const farmer = await db.collection('farmers').doc(farmerId).get();
+  const profileRef = db.collection('credit_profiles_v3').doc(farmerId);
+  const profile = await profileRef.get();
+  const oldAuthorized = profile.data()?.authorizedKendraIds || [];
+
+  await profileRef.set({
+    farmerId,
+    kcnId: farmer.data()?.kcnId || d.kcnId || '',
+    farmerName: farmer.data()?.name || d.farmerName || '',
+    totalCredit,
+    totalPaid,
+    outstanding,
+    activeCenters: activeCenters.size,
+    overdueCenters: overdueCenters.size,
+    creditScore: score,
+    authorizedKendraIds: oldAuthorized,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  await db.collection('credit_public_v3').doc(farmerId).set({
+    farmerId,
+    kcnId: farmer.data()?.kcnId || d.kcnId || '',
+    farmerName: farmer.data()?.name || d.farmerName || '',
+    outstanding,
+    activeCenters: activeCenters.size,
+    overdueCenters: overdueCenters.size,
+    creditScore: score,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return null;
+});
+
+exports.createNetworkMember = onDocumentCreated('farmers/{uid}', async (event) => {
+  const farmer = event.data?.data();
+  if (!farmer) return null;
+  const referralInput = farmer.referredBy || farmer.referralInput || '';
+  if (!referralInput) return null;
+  const sponsorSnap = await db.collection('farmers').where('referralCode', '==', referralInput).limit(1).get();
+  if (sponsorSnap.empty) return null;
+  const sponsor = sponsorSnap.docs[0];
+  await db.collection('network_members_v3').doc(event.params.uid).set({
+    farmerId: event.params.uid,
+    memberName: farmer.name || '',
+    kcnId: farmer.kcnId || '',
+    sponsorId: sponsor.id,
+    sponsorName: sponsor.data().name || '',
+    sponsorKcnId: sponsor.data().kcnId || '',
+    level: 1,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return null;
+});
+
+exports.processNetworkOrder = onDocumentCreated('network_orders_v3/{orderId}', async (event) => {
+  const orderRef = event.data?.ref;
+  const order = event.data?.data();
+  if (!orderRef || !order) return null;
+  const isGroup = String(order.orderType || '') === 'group';
+  const items = Array.isArray(order.items) ? order.items : [];
+  const productId = order.productId;
+  const requested = Math.floor(n(order.quantity));
+  if ((!isGroup && (!productId || requested <= 0)) || (isGroup && items.length === 0)) {
+    await orderRef.update({ status: 'cancelled', failureReason: 'Invalid order.', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    return null;
+  }
+  try {
+    await db.runTransaction(async (tx) => {
+      if (isGroup) {
+        const refs = items.map((item) => ({ ref: db.collection('network_products_v3').doc(String(item.productId || '')), qty: Math.floor(n(item.quantity)) }));
+        for (const entry of refs) {
+          if (!entry.ref.id || entry.qty <= 0) throw new Error('Invalid group item.');
+          const snap = await tx.get(entry.ref);
+          if (!snap.exists) throw new Error('Group product not found.');
+          const p = snap.data() || {};
+          const stock = Math.floor(n(p.stock));
+          if (p.active !== true) throw new Error('A group product is inactive.');
+          if (stock < entry.qty) throw new Error('Insufficient group product stock.');
+          tx.update(entry.ref, { stock: stock - entry.qty, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        }
+      } else {
+        const productRef = db.collection('network_products_v3').doc(productId);
+        const productSnap = await tx.get(productRef);
+        if (!productSnap.exists) throw new Error('Product not found.');
+        const product = productSnap.data() || {};
+        const stock = Math.floor(n(product.stock));
+        if (product.active !== true) throw new Error('Product is inactive.');
+        if (stock < requested) throw new Error('Insufficient stock.');
+        tx.update(productRef, { stock: stock - requested, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+      }
+      tx.update(orderRef, { status: 'pending', inventoryReserved: true, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    });
+  } catch (error) {
+    await orderRef.update({ status: 'cancelled', inventoryReserved: false, failureReason: error.message || 'Inventory error.', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+  }
+  return null;
+});
+
+exports.calculateNetworkRewards = onDocumentWritten('network_orders_v3/{orderId}', async (event) => {
+  const after = event.data?.after;
+  if (!after?.exists) return null;
+
+  const order = after.data() || {};
+  const status = String(order.status || '').toLowerCase();
+  if (!['paid', 'completed'].includes(status) || order.rewardCalculated === true) {
+    return null;
+  }
+
+  const settingsSnap = await db.collection('app_settings_v3').doc('network').get();
+  const settings = settingsSnap.data() || {};
+  const poolPct = n(settings.rewardPoolPercent || 0);
+  const total = n(order.totalAmount);
+  const pool = total * poolPct / 100;
+
+  const batch = db.batch();
+  let allocated = 0;
+
+  // Buyer receives product points, if configured on the order.
+  if (order.farmerId) {
+    const points = n(order.points);
+    if (points > 0) {
+      const pointsRef = db.collection('network_points_v3').doc();
+      batch.set(pointsRef, {
+        farmerId: order.farmerId,
+        orderId: event.params.orderId,
+        points,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  // Walk the network tree through sponsor relationships.
+  // Tree depth is intentionally not limited to three levels.
+  // Payout is limited only by the configured level percentages.
+  let currentFarmerId = order.farmerId || '';
+  const visited = new Set();
+
+  for (let level = 1; level <= 20 && currentFarmerId; level++) {
+    if (visited.has(currentFarmerId)) break;
+    visited.add(currentFarmerId);
+
+    const memberSnap = await db.collection('network_members_v3')
+      .where('farmerId', '==', currentFarmerId)
+      .limit(1)
+      .get();
+
+    if (memberSnap.empty) break;
+
+    const member = memberSnap.docs[0].data() || {};
+    if (String(member.status || '').toLowerCase() === 'exited') break;
+    const sponsorId = String(member.sponsorId || '');
+    if (!sponsorId) break;
+
+    const pct = n(settings[`level${level}Percent`] || 0);
+    if (pct > 0 && pool > 0) {
+      const reward = pool * pct / 100;
+      const rewardRef = db.collection('network_rewards_v3').doc();
+      batch.set(rewardRef, {
+        farmerId: sponsorId,
+        orderId: event.params.orderId,
+        level,
+        percent: pct,
+        amount: reward,
+        status: 'pending',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      allocated += reward;
+    }
+
+    currentFarmerId = sponsorId;
+  }
+
+  const unallocated = Math.max(0, pool - allocated);
+  batch.update(after.ref, {
+    rewardCalculated: true,
+    rewardPool: pool,
+    distributedReward: allocated,
+    unallocatedReward: unallocated,
+    rewardCalculatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await batch.commit();
+  return null;
+});
+

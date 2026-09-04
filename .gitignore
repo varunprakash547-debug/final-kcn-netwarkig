@@ -1,0 +1,50 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Build output
+/build/
+/build
+
+# Android
+.gradle/
+local.properties
+/captures/
+.externalNativeBuild/
+.cxx/
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+
+# iOS
+Pods/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Node / Firebase Functions
+node_modules/
+functions/node_modules/
+.firebase/
+
+# Firebase logs
+firebase-debug.log*
+firestore-debug.log*
+firebase-debug.*.log
+
+# VS Code
+.vscode/
+
+# Secrets / signing files
+.env
+.env.*
+*.jks
+*.keystore

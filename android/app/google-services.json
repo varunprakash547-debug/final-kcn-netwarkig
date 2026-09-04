@@ -1,0 +1,118 @@
+{
+  "project_info": {
+    "project_number": "250640412076",
+    "project_id": "kcn-production",
+    "storage_bucket": "kcn-production.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:250640412076:android:54d4966ee70707b93a5e09",
+        "android_client_info": {
+          "package_name": "com.kcn.krishi_credit_network"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "250640412076-lhhfe13m6e05fm55lmlsjvavg3tfjnkn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaLNfhwQxf9OChmzgqu0bo2ouXoOXPlfM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "250640412076-lhhfe13m6e05fm55lmlsjvavg3tfjnkn.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "250640412076-lgqr759rj6ir6fkmd6v97ic2eg8n91f8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.kcn.krishiCreditNetwork"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:250640412076:android:0fd8268accafcf1a3a5e09",
+        "android_client_info": {
+          "package_name": "in.thekcn.kcn"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "250640412076-lhhfe13m6e05fm55lmlsjvavg3tfjnkn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaLNfhwQxf9OChmzgqu0bo2ouXoOXPlfM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "250640412076-lhhfe13m6e05fm55lmlsjvavg3tfjnkn.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "250640412076-lgqr759rj6ir6fkmd6v97ic2eg8n91f8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.kcn.krishiCreditNetwork"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:250640412076:android:156380862d8945cc3a5e09",
+        "android_client_info": {
+          "package_name": "in.thekcn.kcn"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "250640412076-lhhfe13m6e05fm55lmlsjvavg3tfjnkn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaLNfhwQxf9OChmzgqu0bo2ouXoOXPlfM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "250640412076-lhhfe13m6e05fm55lmlsjvavg3tfjnkn.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "250640412076-lgqr759rj6ir6fkmd6v97ic2eg8n91f8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.kcn.krishiCreditNetwork"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

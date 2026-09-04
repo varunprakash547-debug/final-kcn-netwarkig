@@ -1,0 +1,689 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // COMMON HELPERS
+    // =========================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      );
+    }
+
+    function role() {
+      return userDoc().data.role;
+    }
+
+    function active() {
+      return signedIn()
+        && userDoc().data.isActive == true
+        && userDoc().data.status in ['active', 'approved'];
+    }
+
+    // Primary Super Admin account.
+    // Keeping this identity trusted also prevents the admin
+    // dashboard from being blocked by a users-document mismatch.
+    function isMasterAdmin() {
+      return signedIn()
+        && request.auth.token.email == 'varunprakash547@gmail.com';
+    }
+
+    function isAdmin() {
+      return isMasterAdmin()
+        || (
+          signedIn()
+          && role() in ['superAdmin', 'super_admin', 'admin']
+        );
+    }
+
+    function isCallCenter() {
+      return active()
+        && role() == 'callCenter';
+    }
+
+    function isKendra() {
+      return active()
+        && role() == 'krishiKendra';
+    }
+
+    function isFarmer() {
+      return active()
+        && role() == 'farmer';
+    }
+
+    // Feature flags default to ON until the Admin creates the
+    // feature-settings document.
+    function featureEnabled(key) {
+      return !exists(
+        /databases/$(database)/documents/app_settings_v3/features
+      )
+      || get(
+        /databases/$(database)/documents/app_settings_v3/features
+      ).data[key] == true;
+    }
+
+
+    // =========================================================
+    // BACK-DATE HELPERS
+    // =========================================================
+
+    function backdateApprovedFor(uid) {
+      return get(
+        /databases/$(database)/documents/users/$(uid)
+      ).data.backdateApproved == true;
+    }
+
+    function backdateGloballyEnabled() {
+      return get(
+        /databases/$(database)/documents/app_settings_v3/network
+      ).data.allowBackdatedEntries == true;
+    }
+
+    function recentEnough(dateValue) {
+      return dateValue >= request.time
+        - duration.value(2557, 'd');
+    }
+
+    function kendraMayBackdate(kendraId, dateValue) {
+      return featureEnabled('kendraBackdateEnabled')
+        && backdateGloballyEnabled()
+        && backdateApprovedFor(kendraId)
+        && recentEnough(dateValue);
+    }
+
+
+    // =========================================================
+    // USERS
+    // =========================================================
+
+    match /users/{uid} {
+
+      // Normal registration.
+      // All new accounts start pending + inactive.
+      //
+      // Farmer must provide Aadhaar hash, last 4 digits,
+      // consent and initial unverified status.
+      allow create: if signedIn()
+        && featureEnabled('registrationEnabled')
+        && request.auth.uid == uid
+        && request.resource.data.role
+            in ['farmer', 'krishiKendra', 'callCenter']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.isActive == false
+        && request.resource.data.email == request.auth.token.email
+        && (
+          request.resource.data.role != 'farmer'
+          ||
+          (
+            request.resource.data.aadhaarHash is string
+            && request.resource.data.aadhaarHash.size() == 64
+            && request.resource.data.aadhaarLast4 is string
+            && request.resource.data.aadhaarLast4.size() == 4
+            && request.resource.data.aadhaarConsent == true
+            && request.resource.data.aadhaarVerified == false
+          )
+        );
+
+      // Admin can read all users; a normal user only the own profile.
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+        );
+
+      // Admin controls role/status/activation.
+      // Normal users cannot elevate themselves or change
+      // identity-verification fields.
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.isActive == resource.data.isActive
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.aadhaarHash == resource.data.aadhaarHash
+          && request.resource.data.aadhaarLast4 == resource.data.aadhaarLast4
+          && request.resource.data.aadhaarConsent == resource.data.aadhaarConsent
+          && request.resource.data.aadhaarVerified == resource.data.aadhaarVerified
+        );
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // FARMERS
+    // =========================================================
+
+    match /farmers/{farmerId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || isKendra()
+        || (
+          signedIn()
+          && request.auth.uid == farmerId
+        );
+
+      allow create: if signedIn()
+        && request.auth.uid == farmerId;
+
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == farmerId
+        );
+
+      allow delete: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == farmerId
+        );
+    }
+
+
+    // =========================================================
+    // KRISHI KENDRAS
+    // =========================================================
+
+    match /krishi_kendras_v3/{uid} {
+
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+        );
+
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && role() == 'krishiKendra';
+
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+        );
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // KCN CREDITS
+    // =========================================================
+
+    match /credits_v3/{creditId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          featureEnabled('kendraCreditEnabled')
+          && isKendra()
+          && resource.data.krishiKendraId == request.auth.uid
+        )
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      // Kendra may enter today's date.
+      // Historical entry requires:
+      // 1) global back-date setting ON
+      // 2) this Kendra approved by Admin
+      // 3) within 7 years
+      allow create: if isAdmin()
+        || (
+          featureEnabled('kendraCreditEnabled')
+          && isKendra()
+          && request.resource.data.krishiKendraId == request.auth.uid
+          && (
+            request.resource.data.entryDate >= request.time
+            || kendraMayBackdate(
+              request.auth.uid,
+              request.resource.data.entryDate
+            )
+          )
+        );
+
+      allow update: if isAdmin()
+        || (
+          isKendra()
+          && resource.data.krishiKendraId == request.auth.uid
+          && request.resource.data.krishiKendraId == request.auth.uid
+        );
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // PAYMENTS
+    // =========================================================
+
+    match /payments_v3/{paymentId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          featureEnabled('kendraPaymentEnabled')
+          && isKendra()
+          && resource.data.krishiKendraId == request.auth.uid
+        )
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow create: if isAdmin()
+        || (
+          featureEnabled('kendraPaymentEnabled')
+          && isKendra()
+          && request.resource.data.krishiKendraId == request.auth.uid
+          && (
+            request.resource.data.entryDate >= request.time
+            || kendraMayBackdate(
+              request.auth.uid,
+              request.resource.data.entryDate
+            )
+          )
+        );
+
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // CREDIT PROFILES
+    // =========================================================
+
+    match /credit_profiles_v3/{farmerId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && request.auth.uid == farmerId
+        )
+        || (
+          isKendra()
+          && request.auth.uid in resource.data.authorizedKendraIds
+        );
+
+      allow create: if signedIn()
+        && request.auth.uid == farmerId;
+
+      allow update: if isAdmin()
+        || (
+          isFarmer()
+          && request.auth.uid == farmerId
+        )
+        || isKendra();
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // PUBLIC CREDIT SUMMARY
+    // =========================================================
+
+    match /credit_public_v3/{farmerId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || isKendra()
+        || isFarmer();
+
+      allow create: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == farmerId
+        );
+
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // FARMER DETAIL ACCESS REQUESTS
+    // =========================================================
+
+    match /access_requests_v3/{id} {
+
+      allow create: if isKendra()
+        && request.resource.data.kendraId == request.auth.uid;
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isKendra()
+          && resource.data.kendraId == request.auth.uid
+        )
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow update: if isAdmin()
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // NETWORK PRODUCTS
+    // =========================================================
+
+    match /network_products_v3/{productId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (isFarmer() && featureEnabled('farmerProductsEnabled'));
+
+      allow create, update, delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // NETWORK ORDERS
+    // =========================================================
+
+    match /network_orders_v3/{orderId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow create: if featureEnabled('networkOrderingEnabled')
+        && isFarmer()
+        && request.resource.data.farmerId == request.auth.uid;
+
+      allow update: if isAdmin()
+        || isCallCenter();
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // NETWORK MEMBERS
+    // =========================================================
+
+    match /network_members_v3/{id} {
+
+      // A Farmer can read their own membership document.
+      // This also works when the document does not exist yet.
+      allow get: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && id == request.auth.uid
+        )
+        || (
+          isFarmer()
+          && resource.data.sponsorId == request.auth.uid
+        );
+
+      // Direct-team queries are limited to members sponsored
+      // by the signed-in Farmer.
+      allow list: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && resource.data.sponsorId == request.auth.uid
+        );
+
+      allow write: if isAdmin();
+    }
+
+
+    // =========================================================
+    // NETWORK POINTS
+    // =========================================================
+
+    match /network_points_v3/{id} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow write: if isAdmin();
+    }
+
+
+    // =========================================================
+    // NETWORK REWARDS
+    // =========================================================
+
+    match /network_rewards_v3/{id} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow write: if isAdmin()
+        || isCallCenter();
+    }
+
+
+    // =========================================================
+    // NETWORK CREDIT
+    // =========================================================
+
+    match /network_credit_v3/{id} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow write: if isAdmin()
+        || isCallCenter();
+    }
+
+
+    // =========================================================
+    // NETWORK PAYMENTS
+    // =========================================================
+
+    match /network_payments_v3/{id} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isFarmer()
+          && resource.data.farmerId == request.auth.uid
+        );
+
+      allow write: if isAdmin()
+        || isCallCenter();
+    }
+
+
+    // =========================================================
+    // BACK-DATE REQUESTS
+    // =========================================================
+
+    match /backdate_requests_v3/{id} {
+
+      // Admin sees all.
+      // Kendra sees only its own request.
+      allow read: if isAdmin()
+        || (
+          isKendra()
+          && resource.data.kendraId == request.auth.uid
+        );
+
+      // Kendra can request; must start as pending.
+      allow create: if featureEnabled('kendraBackdateEnabled')
+        && isKendra()
+        && request.resource.data.kendraId == request.auth.uid
+        && request.resource.data.status == 'pending';
+
+      // Only Admin approves/rejects.
+      allow update: if isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // ADVERTISEMENTS
+    // =========================================================
+
+    match /advertisements_v3/{id} {
+
+      // Admin can view all ads.
+      // Active users can view only active advertisements.
+      allow read: if isAdmin()
+        || (
+          active()
+          && resource.data.active == true
+        );
+
+      // Only Admin manages ads.
+      allow create, update, delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // PRODUCT GROUPS
+    // =========================================================
+
+    match /product_groups_v3/{groupId} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (isFarmer() && featureEnabled('farmerGroupsEnabled'));
+
+      allow create, update, delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // PAYMENT FOLLOW-UP REQUESTS
+    // =========================================================
+
+    match /payment_followups_v3/{id} {
+
+      allow create: if isKendra()
+        && request.resource.data.kendraId == request.auth.uid;
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || (
+          isKendra()
+          && resource.data.kendraId == request.auth.uid
+        );
+
+      allow update: if isAdmin()
+        || isCallCenter()
+        || (
+          isKendra()
+          && resource.data.kendraId == request.auth.uid
+        );
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // APP SETTINGS
+    // =========================================================
+
+    match /app_settings_v3/{id} {
+
+      allow read: if isAdmin()
+        || isCallCenter()
+        || isFarmer()
+        || isKendra();
+
+      allow write: if isAdmin();
+    }
+
+
+    // =========================================================
+    // IN-APP NOTIFICATIONS
+    // =========================================================
+
+    match /notifications_v3/{id} {
+
+      // A user can read/update only notifications addressed to that user.
+      allow read, update: if signedIn()
+        && resource.data.recipientId == request.auth.uid;
+
+      // Sender must be the currently signed-in user.
+      allow create: if signedIn()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.recipientId is string
+        && request.resource.data.title is string
+        && request.resource.data.message is string
+        && request.resource.data.read == false;
+
+      // Admin can remove malformed/obsolete notifications if necessary.
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // AUDIT LOGS
+    // =========================================================
+
+    match /audit_logs_v3/{id} {
+
+      allow read, write: if isAdmin();
+    }
+
+
+    // =========================================================
+
+    // Farmer network exit requests.
+    // Client can only create/read its own request.
+    // Cloud Functions uses Admin SDK for server-side processing.
+    match /network_exit_requests_v3/{id} {
+      allow create: if isFarmer()
+        && id == request.auth.uid
+        && request.resource.data.farmerId == request.auth.uid
+        && request.resource.data.status == 'pending';
+
+      allow get: if isAdmin()
+        || (isFarmer() && id == request.auth.uid);
+
+      allow list: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // DENY EVERYTHING ELSE
+    // =========================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
